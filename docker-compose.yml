@@ -1,0 +1,68 @@
+# docker-compose.yml — 3-Tier Vertical Cloud Gaming Latency Simulator
+#
+# Topology (data flow):
+#   End Node (Z) ----> Middle Edge Gateway (Y) ----> Cloud Server (X)
+#
+# Static IPs (subnet 172.20.0.0/16), mirrored from shared/config.py:
+#   cloud_x   -> 172.20.0.10  (port 8000)
+#   middle_y  -> 172.20.0.20  (port 8001)
+#   end_z     -> 172.20.0.30  (port 8002)
+#
+# `cap_add: [NET_ADMIN]` on cloud_x and middle_y is required so that
+# scripts/inject_latency.sh can run `tc netem` inside those containers.
+
+services:
+  cloud_x:
+    build:
+      context: .
+      dockerfile: cloud_x/Dockerfile
+    container_name: cloud_x
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    networks:
+      vertical_net:
+        ipv4_address: 172.20.0.10
+
+  middle_y:
+    build:
+      context: .
+      dockerfile: middle_y/Dockerfile
+    container_name: middle_y
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "8001:8001"
+    restart: unless-stopped
+    depends_on:
+      - cloud_x
+    networks:
+      vertical_net:
+        ipv4_address: 172.20.0.20
+
+  end_z:
+    build:
+      context: .
+      dockerfile: end_z/Dockerfile
+    container_name: end_z
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "8002:8002"
+    restart: unless-stopped
+    depends_on:
+      - middle_y
+    networks:
+      vertical_net:
+        ipv4_address: 172.20.0.30
+
+networks:
+  vertical_net:
+    name: vertical_net
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+          gateway: 172.20.0.1
