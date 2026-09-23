@@ -56,12 +56,20 @@ LATENCY_LOCAL_FALLBACK_MS = 300  # Cloud unusable; execute locally at Y/Z.
 MIDDLE_Y_OFFLOAD_RTT_MS = 40  # Middle Y forwards to Cloud X if RTT <= this.
 END_Z_OFFLOAD_RTT_MS = 40     # End Z forwards to Middle Y if RTT <= this.
 
-# Middle Y switch Hysteresis / debounce:
-# - switch forward->fallback only after the smoothed total RTT exceeds
-#   (threshold + HALF_HYSTERESIS) for MIN_SWITCHES consecutive samples.
-# - switch fallback->forward only after 3 consecutive samples at or below
-#   (threshold - HALF_HYSTERESIS).
-MIDDLE_Y_HYSTERESIS_HALF_MS = 15.0
+# Middle Y switch Hysteresis / debounce.
+# The measured RTT is MODE-DEPENDENT (forwarding to X adds the Y→X leg, local
+# execution only measures Z↔Y).  A single symmetric band cannot prevent
+# oscillation between "forward ⇒ high RTT" and "local ⇒ low RTT".
+#
+# Asymmetric policy:
+# - forward → fallback (execute at Y) when EWMA >  threshold + HALF_HYSTERESIS
+#   for MIN_SWITCHES consecutive samples.
+# - fallback → forward (offload to X again) only when EWMA ≤ FALLBACK_RETURN_MS
+#   for MIN_SWITCHES consecutive samples — i.e. the network is near-clean.
+#   Local-mode RTT (~20 ms) is above RETURN, so once on Y it stays there;
+#   when injected delays are removed (RTT ~5 ms) it returns to X.
+MIDDLE_Y_HYSTERESIS_HALF_MS = 2.0
+MIDDLE_Y_FALLBACK_RETURN_MS = 15.0
 MIDDLE_Y_MIN_SWITCHES = 3
 
 # ---------------------------------------------------------------------------

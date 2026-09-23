@@ -28,6 +28,7 @@ from fastapi.responses import JSONResponse
 from shared.config import (
     CLOUD_X_HOST,
     CLOUD_X_PORT,
+    MIDDLE_Y_FALLBACK_RETURN_MS,
     MIDDLE_Y_HYSTERESIS_HALF_MS,
     MIDDLE_Y_LABEL,
     MIDDLE_Y_MIN_SWITCHES,
@@ -77,6 +78,8 @@ _probe_task: asyncio.Task | None = None
 
 # EWMA-smoothed total user-path RTT used for the hysteresis decision.
 _ewma_total_ms: float = 0.0
+# Most recent RTT End Z measured (drives the decision; also exposed to GUI).
+_last_measured_rtt_ms: float = 0.0
 # Consecutive-sample counters: a switch requires MIN_SWITCHES agreeing samples
 # *outside* the hysteresis band (prevents stick/flap on a single spike).
 _fallback_streak: int = 0
@@ -250,13 +253,18 @@ async def execute_or_proxy(payload: GameInputRequest) -> GameStateResponse:
     agrees with the chart.  Falls back to the local timestamp estimate only if
     End Z hasn't reported a measurement yet.
 
-    A smoothed EWMA is compared with hysteresis: a switch requires
-    ``MIDDLE_Y_MIN_SWITCHES`` consecutive samples OUTSIDE the hysteresis band
-    (threshold ± half-width).  This prevents a single jitter spike from
-    sticking or flapping the migration.
+    A smoothed EWMA drives an ASYMMETRIC switch policy (the measured RTT is
+    mode-dependent — forwarding includes the Y→X leg, local execution does
+    not — so a symmetric band oscillates):
+    - forward → fallback only if EWMA EXCEEDS (threshold + hyst) for
+      ``MIDDLE_Y_MIN_SWITCHES`` consecutive samples (network degraded).
+    - fallback → forward only if EWMA ≤ ``MIDDLE_Y_FALLBACK_RETURN_MS`` for
+      ``MIDDLE_Y_MIN_SWITCHES`` consecutive samples (network near-clean).
+    This keeps the migration stable: local-mode RTT (~20 ms) sits above the
+    return threshold, so once on Y it stays there until delays are removed.
     """
     global _zy_rtt_ms, _ewma_total_ms, _forward_enabled
-    global _fallback_streak, _forward_streak
+    global _fallback_streak, _forward_streak, _last_measured_rtt_ms
 
     now_ms = int(time.time() * 1000)
 
@@ -273,29 +281,38 @@ async def execute_or_proxy(payload: GameInputRequest) -> GameStateResponse:
         total_rtt = _zy_rtt_ms + yx_rtt
 
     # EWMA smoothing so a single reading can't flip/stick the decision.
+    _last_measured_rtt_ms = round(total_rtt, 1)
     if _ewma_total_ms <= 0:
         _ewma_total_ms = float(total_rtt)
     else:
         _ewma_total_ms = 0.6 * _ewma_total_ms + 0.4 * float(total_rtt)
 
-    low = _offload_threshold_ms - MIDDLE_Y_HYSTERESIS_HALF_MS
-    high = _offload_threshold_ms + MIDDLE_Y_HYSTERESIS_HALF_MS
+    # Asymmetric hysteresis (avoids mode-dependent oscillation):
+    # - forward → fallback only when EWMA > threshold + hyst (network degraded).
+    # - fallback → forward only when EWMA ≤ FALLBACK_RETURN_MS (near-clean).
+    fall_threshold = _offload_threshold_ms + MIDDLE_Y_HYSTERESIS_HALF_MS
 
-    # Debounce: only switch once enough consecutive samples fall OUTSIDE the band.
-    if _ewma_total_ms > high:
-        _fallback_streak += 1
-        _forward_streak = 0
-        if _fallback_streak >= MIDDLE_Y_MIN_SWITCHES:
-            _forward_enabled = False
-    elif _ewma_total_ms < low:
-        _forward_streak += 1
-        _fallback_streak = 0
-        if _forward_streak >= MIDDLE_Y_MIN_SWITCHES:
-            _forward_enabled = True
+    # Debounce: switch only for MIN_SWITCHES consecutive agreeing samples.
+    if _forward_enabled:
+        # Currently forwarding — degrade only if RTT stays high.
+        if _ewma_total_ms > fall_threshold:
+            _fallback_streak += 1
+            _forward_streak = 0
+            if _fallback_streak >= MIDDLE_Y_MIN_SWITCHES:
+                _forward_enabled = False
+        else:
+            _fallback_streak = 0
+            _forward_streak += 1
     else:
-        # Inside the hysteresis band — keep the current decision (no flapping).
-        _fallback_streak = 0
-        _forward_streak = 0
+        # Currently in local fallback — return to X only when near-clean.
+        if _ewma_total_ms <= MIDDLE_Y_FALLBACK_RETURN_MS:
+            _forward_streak += 1
+            _fallback_streak = 0
+            if _forward_streak >= MIDDLE_Y_MIN_SWITCHES:
+                _forward_enabled = True
+        else:
+            _fallback_streak += 1
+            _forward_streak = 0
 
     if _forward_enabled:
         logger.info(
@@ -350,16 +367,17 @@ async def update_threshold(payload: dict) -> dict:
 @app.get("/state", status_code=200)
 async def get_state() -> dict:
     """Return the current probe state and forwarding decision."""
-    _yx = _cloud_rtt_ms if _cloud_rtt_ms > 0 else 2.0
     return {
         "forward_enabled": _forward_enabled,
         "cloud_rtt_ms": _cloud_rtt_ms,
         "zy_rtt_ms": _zy_rtt_ms,
-        "total_rtt_ms": round(_zy_rtt_ms + _yx, 1),
+        "total_rtt_ms": _last_measured_rtt_ms,
+        "measured_rtt_ms": _last_measured_rtt_ms,
         "ewma_total_ms": round(_ewma_total_ms, 1),
         "fallback_streak": _fallback_streak,
         "forward_streak": _forward_streak,
         "hysteresis_half_ms": MIDDLE_Y_HYSTERESIS_HALF_MS,
+        "fallback_return_ms": MIDDLE_Y_FALLBACK_RETURN_MS,
         "min_switches": MIDDLE_Y_MIN_SWITCHES,
         "threshold_ms": _offload_threshold_ms,
         "tier": MIDDLE_Y_LABEL,
