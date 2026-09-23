@@ -1,7 +1,15 @@
-# AGENTS.md - 3-Tier Vertical Cloud Gaming Latency Simulator
+# AGENT.md - 3-Tier Vertical Cloud Gaming Latency Simulator
 
-This repository contains an undergraduate research thesis project modeling dynamic task migration across a 3-tier vertical cloud architecture: **End Node (Z) -> Middle Edge Gateway (Y) -> Cloud Server (X)** under simulated network latency degradation.
+This repository contains an undergraduate research thesis project modeling dynamic task migration across a 3-tier vertical cloud architecture: **End Node (Z) -> Middle Edge Gateway (Y) -> Cloud Server (X)** under simulated network latency degradation. Aiming to find new way to reduce latency between cloud services and end nodes. In this particular example, I would like to experiment the possibility of edge computing using proper load balancing and algorithm to achieve my goal.
 
+### Stage 1 Prototype <--where we at
+Creating a vertical structured simulator. Which solely create the function of switching operating node if the RTT(round trip time) which also means the time needed between the end node z request a task and when z recieving the the result exceed the threshold. I plan to create 3 docker container to simulate 3 nodes and how they interact.
+
+### Stage 2 Complete Simulator
+Based on the Prototype, making task actually migrate between nodes depending on the latency.
+
+### Stage 3 Final Simulator
+Based on Complete Simulator, using 3 PC to simulate different situation closer to actual use case.
 ---
 
 ## 1. Quick Commands
@@ -15,7 +23,23 @@ Run these commands from the repository root:
 
 ---
 
-## 2. Directory Layout & Scope
+## 2. Rules
+### Safety & Boundaries
+- NEVER execute destructive commands (`rm -rf`, `DROP DATABASE`, `git reset --hard`) without explicit human confirmation.
+- Read files before editing them. Do not overwrite files based on assumptions.
+- Read files from a small to big scope. Scan whole repo only if needed. Also, do not scan the lib folder such as .venv or other files that ignore by git. Only do so if needed and ask for permission.
+
+### Tool Calling Limits
+- Maximum sequential tool calls per turn: 10.
+- If a tool error repeats 3 times, HALT execution and ask the user for intervention.
+
+### Quality & Verification
+- Always run the project linter and test suite after modifying code.
+- Do not announce a task as "Done" until verification commands pass with exit code 0.
+
+---
+
+## 3. Directory Layout & Scope
 
 ```text
 /
