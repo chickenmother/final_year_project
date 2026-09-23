@@ -364,7 +364,8 @@ for i, (label, h) in enumerate(health.items()):
 # RTT timeline chart (plotly)
 # ---------------------------------------------------------------------------
 st.markdown("---")
-st.markdown("### 📈  Latency Over Time")
+st.markdown("### 📈  Latency Over Time — RTT (Z → result → Z)")
+st.caption("One line = End Z's measured round-trip: time from Z sending a request until the result returns to Z (a.k.a. the RTT).")
 
 # Feed the history from End Z metrics (deduped — only new samples).
 metrics = _fetch_json(END_Z_METRICS)
@@ -394,38 +395,22 @@ if history:
     df = pd.DataFrame(history)
     fig = go.Figure()
 
-    # Scatter trace coloured by band
-    for band, colour in BAND_COLOURS.items():
-        mask = df["band"] == band
-        if mask.any():
-            fig.add_trace(
-                go.Scatter(
-                    x=df.loc[mask, "timestamp"],
-                    y=df.loc[mask, "rtt_ms"],
-                    mode="lines+markers",
-                    name=band,
-                    line=dict(color=colour, width=2),
-                    marker=dict(size=4, color=colour),
-                    hovertemplate="%{y:.1f} ms<br>%{x}",
-                )
-            )
-
-    # Threshold reference lines (band boundaries)
-    for label, limit in BAND_LIMITS.items():
-        if label == "local_fallback":
-            continue
-        colour = BAND_COLOURS.get(label, "#888")
-        fig.add_hline(
-            y=limit,
-            line_dash="dot",
-            line_color=colour,
-            opacity=0.5,
-            annotation_text=f"{label} ≤{limit}",
-            annotation_position="top left",
+    # Single contiguous RTT series — one line, one legend entry.
+    # y = End Z's measured round-trip time: request sent → result returned to Z.
+    fig.add_trace(
+        go.Scatter(
+            x=df["timestamp"],
+            y=df["rtt_ms"],
+            mode="lines+markers",
+            name="RTT (Z → result → Z)",
+            line=dict(color="#1f77b4", width=2),
+            marker=dict(size=4, color="#1f77b4"),
+            hovertemplate="RTT %{y:.1f} ms<extra></extra>",
         )
+    )
 
     # Live offload threshold (the decision boundary for Y → X forwarding),
-    # shown as a prominent dashed red line.
+    # shown as a single dashed red reference line.
     offload_threshold = _fetch_threshold()
     if offload_threshold and offload_threshold > 0:
         fig.add_hline(
@@ -441,7 +426,7 @@ if history:
         height=350,
         margin=dict(l=10, r=10, t=10, b=10),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left"),
-        xaxis_title="",
+        xaxis_title="time",
         yaxis_title="RTT (ms)",
         hovermode="x unified",
         template="plotly_white",
@@ -542,14 +527,22 @@ st.markdown("### 📡 Middle Y State")
 
 state = _fetch_json(MIDDLE_Y_STATE)
 if state:
-    s1, s2, s3 = st.columns(3)
+    s1, s2, s3, s4 = st.columns(4)
     with s1:
         fwd = state.get("forward_enabled", False)
         st.metric("Forward Enabled", "✅ Yes" if fwd else "❌ No")
     with s2:
-        st.metric("Cloud X RTT (probe)", f"{state.get('cloud_rtt_ms', 0):.1f} ms")
+        st.metric("Decision RTT (measured)",
+                  f"{state.get('measured_rtt_ms', 0):.1f} ms")
     with s3:
+        st.metric("Y→X probe (health)",
+                  f"{state.get('cloud_rtt_ms', 0):.1f} ms")
+    with s4:
         st.metric("Offload Threshold", f"{state.get('threshold_ms', 0):.0f} ms")
+    st.caption(
+        "Decision RTT = End Z's measured round-trip (same RTT as the graph); "
+        "it drives Y→X forwarding. Y→X probe is the health-check latency."
+    )
 else:
     st.caption("Middle Y not reachable")
 # Threshold override
